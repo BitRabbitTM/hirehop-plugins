@@ -12,9 +12,9 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.2.1';
+	var VERSION = '0.2.2';
 	var KEY = 'kyoto_view_on';
-	if (typeof window.jQuery === 'undefined' || typeof window.user === 'undefined') return;
+	if (typeof window.jQuery === 'undefined') return;
 	var $ = window.jQuery, path = window.location.pathname;
 	if (/^\/settings\.php/.test(path) || /^\/login/.test(path)) return;
 
@@ -200,6 +200,7 @@
 
 	// ------------------------------------------------------------------ run
 	$(function () {
+		if (typeof window.user === 'undefined') return; // not a logged-in HireHop page
 		var on = isOn();
 		safe('styles', addStyles);
 		safe('toggle', function () { addToggle(on); });
