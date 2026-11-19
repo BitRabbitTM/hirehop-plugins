@@ -12,7 +12,7 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.2.0';
+	var VERSION = '0.2.1';
 	var KEY = 'kyoto_view_on';
 	if (typeof window.jQuery === 'undefined' || typeof window.user === 'undefined') return;
 	var $ = window.jQuery, path = window.location.pathname;
@@ -78,6 +78,7 @@
 	}
 
 	function addToggle(on) {
+		if (/^\/modules\/scanning(\/|$)/.test(path)) return; // keep the scan box clear; switch from any other page
 		$('<div>', { id: 'kyoto_view_toggle', 'class': on ? 'on' : '', title: 'Kyoto view ' + VERSION + ' - simplified HireHop for this device only. Click to switch.', text: 'Kyoto view: ' + (on ? 'ON' : 'OFF') })
 			.appendTo(document.body).on('click', function () { setOn(!on); });
 	}
