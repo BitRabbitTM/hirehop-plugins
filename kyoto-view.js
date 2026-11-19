@@ -12,7 +12,7 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.3.1';
+	var VERSION = '0.3.2';
 	var TESTED_API = 1.31;              // HireHop hh_api_version this was built against
 	var KEY = 'kyoto_view_on';
 	var KEY_DAYS = 'kyoto_view_days';
@@ -64,6 +64,8 @@
 	function scanUrl(jobId, kind) { return '/modules/scanning/?main_id=' + encodeURIComponent(jobId) + '&kind=' + kind; }
 	function statusName(n) { try { return window.lang.statusValues[n] || ''; } catch (e) { return ''; } }
 	function errorText(code) { try { return isNaN(parseInt(code, 10)) ? plain(code) : (window.lang.error[code] || ''); } catch (e) { return ''; } }
+	// Attributes are set with .attr(): jQuery's $('<input>', {...}) would call jQuery UI's autocomplete() for an "autocomplete" key
+	function textField(placeholder) { return $('<input>').attr({ type: 'text', placeholder: placeholder, autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false' }).addClass('kyoto-filter'); }
 	function button(text, parent) { return $('<div>', { 'class': 'kyoto-btn', text: text, role: 'button' }).appendTo(parent); }
 
 	// ---------------------------------------------------------------- styles
@@ -172,7 +174,7 @@
 				out.find('.kyoto-nomatch').remove();
 				if (!shown && out.find('.kyoto-job').length) note('No jobs match "' + q + '".').addClass('kyoto-nomatch').appendTo(out);
 			}
-			if (a.filter) filterBox = $('<input>', { type: 'text', 'class': 'kyoto-filter', placeholder: 'Job name, client or number', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false' })
+			if (a.filter) filterBox = textField('Job name, client or number')
 				.appendTo($('<div>', { 'class': 'kyoto-row' }).appendTo(list)).on('input', applyFilter);
 			out = $('<div>').appendTo(list).append(note('Loading jobs…'));
 			loading = true;
@@ -237,7 +239,7 @@
 			select(findItem);
 			if (typeof window.open_barcode !== 'function' || !$('#barcode').length) { note('Item search is not available on this page.').appendTo(list); return; }
 			var row = $('<div>', { 'class': 'kyoto-row' }).appendTo(list);
-			var field = $('<input>', { type: 'text', 'class': 'kyoto-filter', placeholder: 'Tag number or serial number', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'search' }).appendTo(row);
+			var field = textField('Tag number or serial number').attr('enterkeyhint', 'search').appendTo(row);
 			var go = function () { var code = String(field.val() || '').trim(); if (code === '') return; $('#barcode').val(code); window.open_barcode(); };   // HireHop's own tag search
 			field.on('keydown', function (e) { if (e.key === 'Enter') go(); });
 			button('Find', row).addClass('small').on('click', go);
