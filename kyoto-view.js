@@ -12,7 +12,7 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.4.0';
+	var VERSION = '0.4.1';
 	var TESTED_API = 1.31;              // HireHop hh_api_version this was built against
 	var KEY = 'kyoto_view_on';
 	var KEY_DAYS = 'kyoto_view_days';
@@ -91,7 +91,7 @@
 			'.kyoto-pill.active{background:#b3123a;color:#fff;border-color:#b3123a}',
 			'.kyoto-row{display:flex;gap:8px;margin:0 0 8px 0}',
 			'.kyoto-search{margin-bottom:12px}.kyoto-search .kyoto-btn{flex:0 0 auto;padding-left:18px;padding-right:18px}',
-			'.kyoto-filter{flex:1;min-width:0;box-sizing:border-box;padding:10px;font-size:16px;border-radius:6px;border:1px solid rgba(128,128,128,.5);background:rgba(128,128,128,.1);color:inherit}',
+			'.kyoto-qa input.kyoto-filter{flex:1;min-width:0;box-sizing:border-box;padding:10px;font-size:16px;border-radius:6px;border:1px solid rgba(128,128,128,.5);background:rgba(128,128,128,.1);color:inherit}',
 			'a.kyoto-job{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;padding:10px;border-radius:6px;border:1px solid rgba(128,128,128,.35);margin-bottom:6px;cursor:pointer;text-decoration:none;color:inherit}',
 			'.kyoto-job .num{font-weight:700;min-width:4.2em}',
 			'.kyoto-job .name{flex:1 1 12em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -163,7 +163,7 @@
 		if (!host.length) return;
 		var box = $('<div>', { 'class': 'kyoto-qa' }).prependTo(host);
 		var searchRow = $('<div>', { 'class': 'kyoto-row kyoto-search' }).appendTo(box);
-		var searchBox = textField('Search every job: name, client or job number').attr('enterkeyhint', 'search').appendTo(searchRow);
+		var searchBox = textField('Search jobs: name, client or number').attr('enterkeyhint', 'search').appendTo(searchRow);
 		var searchBtn = button('Search', searchRow).addClass('small');
 		$('<h3>', { text: 'Warehouse' }).appendTo(box);
 		var btns = $('<div>', { 'class': 'kyoto-qa-btns' }).appendTo(box);
@@ -173,7 +173,7 @@
 		var days = parseInt(getStore(KEY_DAYS), 10); if ([1, 7, 14].indexOf(days) < 0) days = 7;
 		var loading = false;
 
-		function select(btn) { box.find('.kyoto-btn').removeClass('active'); if (btn) btn.addClass('active'); list.empty(); }
+		function select(btn) { box.find('.kyoto-btn').removeClass('active'); if (btn) btn.addClass('active'); list.empty().insertAfter(btn ? btns2 : searchRow); }
 		function note(text) { return $('<div>', { 'class': 'kyoto-note', text: text }); }
 		function openSearch() { safe('open search', function () { var acc = $('#accordion'); if (acc.accordion('instance')) acc.accordion('option', 'active', 0); }); }
 
@@ -226,33 +226,37 @@
 			var q = String(searchBox.val() || '').trim();
 			select(null);
 			if (q.length < 2) { note('Type at least two letters, or a job number.').appendTo(list); return; }
+			if (isPhone()) searchBox.trigger('blur');   // drop the keyboard so the results can be seen
 			var out = $('<div>').appendTo(list).append(note('Searching…'));
-			var found = {}, failed = 0, capped = false, steps = [], i = 0;
+			var found = {}, failed = 0, why = '', capped = false, steps = [], i = 0;
+			// Count a failure; stop asking once the connection or HireHop itself is refusing
+			function bad(res, stop) { failed++; if (res && res.error !== undefined && !why) why = errorText(res.error); if (stop) i = steps.length; }
 			var a = { kind: 0, dateKey: 'OUT_DATE', dateWord: 'out', filter: true };
 			function add(r) { var k = String(r.NUMBER); if (k && !found[k]) found[k] = r; }
 			if (/^\d{1,9}$/.test(q)) steps.push(function () {
 				return $.ajax({ url: '/php_functions/job_refresh.php', dataType: 'json', timeout: 15000, data: { job: q } }).done(function (j) {
 					if (j && j.error === undefined && j.ID) add({ NUMBER: j.ID, JOB_NAME: j.JOB_NAME, COMPANY: j.COMPANY, CLIENT: j.NAME, STATUS: j.STATUS, OUT_DATE: j.OUT_DATE, RETURN_DATE: j.RETURN_DATE });
-				});   // "no such job" is an ordinary reply here, not a failure
+					else if (!j || (j.error !== undefined && Number(j.error) !== 7)) bad(j, j && Number(j.error) === 327);   // error 7 = no such job, an ordinary answer
+				}).fail(function () { bad(null, true); });
 			});
 			$.each(['JOB_NAME', 'COMPANY', 'CLIENT'], function (n, field) {
 				steps.push(function () {
 					return fetchJobs([], null, { filter: { field: field, value: q } }).done(function (res) {
-						if (badReply(res)) { failed++; return; }
+						if (badReply(res)) { bad(res, true); return; }
 						if (Number(res.totalRecords) > res.data.length) capped = true;
 						$.each(res.data, function (j, r) { add(r); });
-					}).fail(function () { failed++; });
+					}).fail(function () { bad(null, true); });
 				});
 			});
 			function finish() {
 				loading = false;
 				out.empty();
 				var rows = $.map(found, function (r) { return r; }).sort(byDate('OUT_DATE', true)), now = nowStamp();
-				if (!rows.length) note(failed ? 'The search could not be completed. You may need to log in again.' : 'No jobs found for "' + q + '".').appendTo(out);
+				if (!rows.length) note(failed ? 'The search could not be completed' + (why ? ' (' + why + ').' : '. Check the connection, or you may need to log in again.') : 'No jobs found for "' + q + '".').appendTo(out);
 				else note(rows.length + (rows.length === 1 ? ' job' : ' jobs') + ' found, newest first. Closed jobs are included.').appendTo(out);
+				if (capped) note('There are more than 100 matches, so older jobs are missing. Add more letters to narrow it down.').appendTo(out);
+				if (failed && rows.length) note('Part of the search failed' + (why ? ' (' + why + ')' : '') + ', so some jobs may be missing.').appendTo(out);
 				$.each(rows, function (j, r) { jobRow(out, r, a, now); });
-				if (capped) note('There are more than 100 matches. Add more letters to narrow it down.').appendTo(out);
-				if (failed && rows.length) note('Part of the search failed, so some jobs may be missing.').appendTo(out);
 				if (failed) button('Try again', out).addClass('small').on('click', runSearch);
 			}
 			function next() {
@@ -286,7 +290,9 @@
 					wait.remove();
 					if (badReply(res)) {
 						var why = res && res.error !== undefined ? errorText(res.error) : '';
-						note('Could not load jobs' + (why ? ' (' + why + ')' : '') + '. You may need to log in again.').addClass('kyoto-more').appendTo(out); page--; return;
+						note('Could not load jobs' + (why ? ' (' + why + ')' : '') + '. You may need to log in again.').addClass('kyoto-more').appendTo(out);
+						button('Try again', out).addClass('small kyoto-more').on('click', more);
+						page--; return;
 					}
 					var now = nowStamp(), total = Number(res.totalRecords) || 0;
 					$.each(res.data.slice().sort(byDate('RETURN_DATE', true)), function (j, r) {
