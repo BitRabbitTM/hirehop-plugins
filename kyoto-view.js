@@ -479,11 +479,12 @@
 					else if (tries > 24) { window.clearInterval(t); window.alert(manual); }
 					return;
 				}
-				var box = $('.ui-dialog:visible').has('input.picklist_type').find('input[type="search"]').first();
-				if (box.length) {
+				var dlg = $('.ui-dialog:visible').has('input.picklist_type'), box = dlg.find('input[type="search"]').first();
+				// Wait for the picker's first list to arrive; a search sent before that is overwritten by it
+				if (box.length && (dlg.find('.pq-grid-cell').length || tries > 24)) {
 					window.clearInterval(t);
-					box.val(safeTerm(title)).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' }));   // runs the picker's own search
-				} else if (tries > 24) { window.clearInterval(t); window.alert(manual); }
+					window.setTimeout(function () { box.val(safeTerm(title)).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' })); }, 300);   // runs the picker's own search
+				} else if (!box.length && tries > 24) { window.clearInterval(t); window.alert(manual); }
 			}, 250);
 		}
 		// If the job opened on a tab that is now hidden, go back to the first tab
