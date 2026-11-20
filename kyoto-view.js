@@ -12,12 +12,11 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.5.0';
+	var VERSION = '0.5.1';
 	var TESTED_API = 1.31;              // HireHop hh_api_version this was built against
 	var KEY = 'kyoto_view_on';
 	var KEY_DAYS = 'kyoto_view_days';
 	var KEY_MAINT = 'kyoto_view_maint_tab';
-	var KEY_KITS = 'kyoto_view_kits';
 	if (typeof window.jQuery === 'undefined' || window.kyotoView) return;   // never run twice
 	var $ = window.jQuery, path = window.location.pathname;
 	if (/^\/settings\.php/.test(path) || /^\/login/.test(path)) return;
@@ -43,6 +42,8 @@
 	}
 	function safe(name, fn) { try { fn(); } catch (e) { if (window.console) console.log('Kyoto view: ' + name + ' skipped', e); } }
 	function esc(s) { return $('<div>').text(s == null ? '' : String(s)).html(); }
+	// Decode HTML entities in server text without building any elements from it
+	function decode(text) { var ta = document.createElement('textarea'); ta.innerHTML = String(text == null ? '' : text); return ta.value.trim(); }
 	function plain(html) { return $('<div>').html(String(html == null ? '' : html)).text().trim(); }
 	function pad(n) { return (n < 10 ? '0' : '') + n; }
 	function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
@@ -426,18 +427,18 @@
 
 		// ---- Add a kit. Kyoto's kits are "virtual" stock items (a name that pulls in its contents), not HireHop packages.
 		// The button lists them, then opens HireHop's own "Add listed items" picker already searched for the chosen kit.
-		var kitBox = null, kitsLoading = false;
+		var kitBox = null, kitsLoading = false, kitCache = null, picking = false;
 		function loadKits() {
-			var d = $.Deferred(), kits = [], page = 1, cached = null;
-			try { cached = JSON.parse(getStore(KEY_KITS) || 'null'); } catch (e) {}
-			if (cached && Array.isArray(cached.kits) && cached.kits.length && new Date().getTime() - Number(cached.t) < 3600000) return d.resolve(cached.kits).promise();
+			var d = $.Deferred(), kits = [], page = 1;
+			// kept in page memory for five minutes only, so a renamed or new kit shows up after a reload
+			if (kitCache && Math.abs(new Date().getTime() - kitCache.t) < 300000) return d.resolve(kitCache.kits).promise();
 			(function next() {
 				$.ajax({ url: '/modules/stock/list.php', dataType: 'json', timeout: 20000, data: { pq_datatype: 'JSON', del: 0, rows: 200, USE_CATEGORY_TREE: 1, cats: '[]', show_hidden: 0, inc_virtual: 1, page: page } }).done(function (res) {
 					if (badReply(res)) { d.reject(res && res.error !== undefined ? errorText(res.error) : ''); return; }
-					$.each(res.data, function (i, r) { if (Number(r.VIRTUAL) === 1) kits.push(plain(r.TITLE)); });
+					$.each(res.data, function (i, r) { if (Number(r.VIRTUAL) === 1) { var kt = decode(r.TITLE); if (kt) kits.push(kt); } });
 					if (res.data.length === 200 && page < 10) { page++; window.setTimeout(next, 400); return; }
 					kits.sort(function (x, y) { return x.localeCompare(y); });
-					setStore(KEY_KITS, JSON.stringify({ t: new Date().getTime(), kits: kits }));
+					kitCache = { t: new Date().getTime(), kits: kits };
 					d.resolve(kits);
 				}).fail(function () { d.reject(''); });
 			})();
@@ -445,14 +446,14 @@
 		}
 		function showKits() {
 			if (kitBox) { kitBox.remove(); kitBox = null; return; }   // second tap closes it
-			if (kitsLoading) return;
 			kitBox = $('<div>', { id: 'kyoto_kits' }).appendTo(bar).append($('<div>', { 'class': 'kyoto-note', text: 'Loading kits…' }));
+			if (kitsLoading) return;   // a load is already on its way and will fill this box
 			kitsLoading = true;
 			loadKits().done(function (kits) {
 				if (!kitBox) return;
 				kitBox.empty();
 				if (!kits.length) { $('<div>', { 'class': 'kyoto-note', text: 'No kits are set up in the stock list yet.' }).appendTo(kitBox); return; }
-				$('<div>', { 'class': 'kyoto-note', text: 'Pick a kit. HireHop\'s item picker opens on it: set the quantity, then Save.' }).appendTo(kitBox);
+				$('<div>', { 'class': 'kyoto-note', text: 'Pick a kit. HireHop\'s item picker opens searched for its name: choose the row with the arrow, set the quantity, then Save. Nothing is added until you press Save.' }).appendTo(kitBox);
 				$.each(kits, function (i, title) { button(title, kitBox).addClass('small').on('click', function () { pickKit(title); }); });
 			}).fail(function (why) {
 				if (!kitBox) return;
@@ -466,25 +467,37 @@
 			return best || String(title);
 		}
 		function pickKit(title) {
+			if (picking) return;   // one pick at a time
 			var manual = 'Open Supplying > New > Add listed items and search for "' + title + '".';
+			var locked = 'HireHop is not letting items be added to this job (it may be locked, closed or read-only).';
 			var tab = $('li[role="tab"] a[href="#items_tab"]').first();
 			if (!tab.length) { window.alert(manual); return; }
 			tab[0].click();
-			var tries = 0, opened = false, t = window.setInterval(function () {
+			picking = true;
+			var tries = 0, opened = false, w = null, t = null, term = safeTerm(title);
+			function stop(msg) { window.clearInterval(t); picking = false; if (msg) window.alert(msg); }
+			t = window.setInterval(function () {
 				tries++;
 				if (!opened) {
-					var w = null; try { w = $('#items_tab').data('customItems'); } catch (e) {}
+					try { w = $('#items_tab').data('customItems'); } catch (e) { w = null; }
 					var item = w && w.imenu_new_listed;
-					if (item && item.length && !item.hasClass('ui-state-disabled')) { opened = true; tries = 0; item.trigger('click'); }   // HireHop's own "Add listed items"
-					else if (tries > 24) { window.clearInterval(t); window.alert(manual); }
+					if (item && item.length && !item.hasClass('ui-state-disabled')) {
+						opened = true; tries = 0;
+						try { w.picklist_dlg.find('input[type="search"]').first().val(term); } catch (e) {}   // so the picker's own first load is already on the kit
+						item.trigger('click');   // HireHop's own "Add listed items"
+					} else if (tries > 24 || (w && tries > 8)) stop(w ? locked : manual);
 					return;
 				}
-				var dlg = $('.ui-dialog:visible').has('input.picklist_type'), box = dlg.find('input[type="search"]').first();
-				// Wait for the picker's first list to arrive; a search sent before that is overwritten by it
-				if (box.length && (dlg.find('.pq-grid-cell').length || tries > 24)) {
-					window.clearInterval(t);
-					window.setTimeout(function () { box.val(safeTerm(title)).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' })); }, 300);   // runs the picker's own search
-				} else if (!box.length && tries > 24) { window.clearInterval(t); window.alert(manual); }
+				var dlg = $('.ui-dialog:visible').has('input.picklist_type'), box = dlg.find('input[type="search"]').first(), ready = false;
+				if (box.length) {
+					// Wait until the picker's own list request has finished; a search sent before that is overwritten by it
+					try { var xhr = dlg.find('.hh_picklist_dlg').hh_picklist_dlg('get_grid').pqGrid('getXHR'); ready = !!xhr && xhr.readyState === 4; }
+					catch (e) { ready = tries > 4 && dlg.find('.grid_container .pq-grid-cell').length > 0; }
+				}
+				if (box.length && (ready || tries > 80)) {
+					stop();
+					window.setTimeout(function () { box.val(term).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' })); }, 300);   // runs the picker's own search
+				} else if (!box.length && tries > 24) stop(manual);
 			}, 250);
 		}
 		// If the job opened on a tab that is now hidden, go back to the first tab
