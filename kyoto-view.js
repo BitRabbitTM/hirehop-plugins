@@ -12,7 +12,7 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.3.2';
+	var VERSION = '0.4.0';
 	var TESTED_API = 1.31;              // HireHop hh_api_version this was built against
 	var KEY = 'kyoto_view_on';
 	var KEY_DAYS = 'kyoto_view_days';
@@ -90,6 +90,7 @@
 			'.kyoto-pill{padding:5px 12px;border-radius:14px;border:1px solid rgba(128,128,128,.5);cursor:pointer;font-size:.9em;display:flex;align-items:center}',
 			'.kyoto-pill.active{background:#b3123a;color:#fff;border-color:#b3123a}',
 			'.kyoto-row{display:flex;gap:8px;margin:0 0 8px 0}',
+			'.kyoto-search{margin-bottom:12px}.kyoto-search .kyoto-btn{flex:0 0 auto;padding-left:18px;padding-right:18px}',
 			'.kyoto-filter{flex:1;min-width:0;box-sizing:border-box;padding:10px;font-size:16px;border-radius:6px;border:1px solid rgba(128,128,128,.5);background:rgba(128,128,128,.1);color:inherit}',
 			'a.kyoto-job{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;padding:10px;border-radius:6px;border:1px solid rgba(128,128,128,.35);margin-bottom:6px;cursor:pointer;text-decoration:none;color:inherit}',
 			'.kyoto-job .num{font-weight:700;min-width:4.2em}',
@@ -126,17 +127,34 @@
 	}
 
 	// ------------------------------------------------------- home quick actions
-	function fetchJobs(statuses, upToDays) {
+	// opts: {sortKey, page, filter: {field, value}} - an empty statuses list means every status
+	function fetchJobs(statuses, upToDays, opts) {
+		opts = opts || {};
 		var now = new Date(), from = '';
-		if (upToDays !== null) from = ymd(new Date(now.getTime() + upToDays * 86400000)) + ' 00:00:00';
-		return $.ajax({
-			url: '/php_functions/search_list.php', type: 'get', dataType: 'json', timeout: 20000,
-			data: {
-				pq_datatype: 'JSON', pq_sort: JSON.stringify([{ dataIndx: 'OUT_DATE', dir: 'down', dataType: 'date' }]),
-				local: stamp(now), tz: tz(), page: 1, rows: 100, from_date: from, to_date: '', jobs: 1, projects: 0, open: 0, closed: 0, money_owed: 0,
-				is_late: 0, mine: 0, no_user: 0, needs_bill: 0, only_open_ended: 0, status: statuses.join(',')
-			}
-		});
+		if (upToDays !== null && upToDays !== undefined) from = ymd(new Date(now.getTime() + upToDays * 86400000)) + ' 00:00:00';
+		var data = {
+			pq_datatype: 'JSON', pq_sort: JSON.stringify([{ dataIndx: opts.sortKey || 'OUT_DATE', dir: 'down', dataType: 'date' }]),
+			local: stamp(now), tz: tz(), page: opts.page || 1, rows: 100, from_date: from, to_date: '', jobs: 1, projects: 0, open: 0, closed: 0, money_owed: 0,
+			is_late: 0, mine: 0, no_user: 0, needs_bill: 0, only_open_ended: 0, status: statuses.join(',')
+		};
+		// the same filter format HireHop's own results grid sends (one field per request; the server only supports AND)
+		if (opts.filter) data.pq_filter = JSON.stringify({ mode: 'AND', data: [{ dataIndx: opts.filter.field, value: opts.filter.value, condition: 'contain', dataType: 'string', cbFn: '' }] });
+		return $.ajax({ url: '/php_functions/search_list.php', type: 'get', dataType: 'json', timeout: 20000, data: data });
+	}
+	function badReply(res) { return !res || res.error !== undefined || !Array.isArray(res.data); }
+	function byDate(key, newestFirst) { return function (x, y) { return String(x[key] || '').localeCompare(String(y[key] || '')) * (newestFirst ? -1 : 1); }; }
+	// One job line. a: {kind (scan kind, or 0 = open the job), dateKey, dateWord, filter (also show the company)}
+	function jobRow(out, r, a, now) {
+		var st = Number(r.STATUS);
+		var blocked = (a.kind === 1 || a.kind === 2) && st < 2;
+		var late = a.dateKey === 'RETURN_DATE' && (st === 4 || st === 5 || st === 6) && r.RETURN_DATE && String(r.RETURN_DATE) < now;
+		var href = (blocked || !a.kind) ? '/job.php?id=' + encodeURIComponent(r.NUMBER) : scanUrl(r.NUMBER, a.kind);
+		var row = $('<a>', { 'class': 'kyoto-job' + (blocked ? ' blocked' : ''), href: href }).appendTo(out);
+		row.data('q', [r.NUMBER, r.JOB_NAME, r.COMPANY, r.CLIENT].join(' ').toLowerCase());
+		row.html('<span class="num">' + esc(r.NUMBER) + '</span><span class="name">' + esc(r.JOB_NAME || r.COMPANY || r.CLIENT) + '</span><span class="meta' + (late ? ' late' : '') + '">' +
+			esc(a.dateWord + ' ' + niceDate(r[a.dateKey])) + (late ? ' · LATE' : '') + ' · ' + esc(statusName(r.STATUS)) + (blocked ? ' (book it first)' : '') +
+			(a.filter && r.COMPANY ? ' · ' + esc(r.COMPANY) : '') + '</span>');
+		return row;
 	}
 
 	function homeQuickActions() {
@@ -144,6 +162,9 @@
 		var host = $('#search_tab .pane-left').first();
 		if (!host.length) return;
 		var box = $('<div>', { 'class': 'kyoto-qa' }).prependTo(host);
+		var searchRow = $('<div>', { 'class': 'kyoto-row kyoto-search' }).appendTo(box);
+		var searchBox = textField('Search every job: name, client or job number').attr('enterkeyhint', 'search').appendTo(searchRow);
+		var searchBtn = button('Search', searchRow).addClass('small');
 		$('<h3>', { text: 'Warehouse' }).appendTo(box);
 		var btns = $('<div>', { 'class': 'kyoto-qa-btns' }).appendTo(box);
 		$('<h3>', { 'class': 'second', text: 'Look up' }).appendTo(box);
@@ -180,25 +201,16 @@
 			loading = true;
 			fetchJobs(a.statuses, a.ranged ? days : null).done(function (res) {
 				out.empty();
-				if (!res || res.error !== undefined || !Array.isArray(res.data)) {
+				if (badReply(res)) {
 					var why = res && res.error !== undefined ? errorText(res.error) : '';
 					note('Could not load jobs' + (why ? ' (' + why + ')' : '') + '. You may need to log in again.').appendTo(out); openSearch(); return;
 				}
 				var rows = res.data.slice(), now = nowStamp(), total = Number(res.totalRecords) || rows.length;
 				if (a.lateOnly) rows = $.grep(rows, function (r) { return r.RETURN_DATE && String(r.RETURN_DATE) < now; });
-				rows.sort(function (x, y) { return String(x[a.dateKey] || '').localeCompare(String(y[a.dateKey] || '')) * (a.filter ? -1 : 1); });
+				rows.sort(byDate(a.dateKey, !!a.filter));
 				if (!rows.length) { note(a.empty).appendTo(out); return; }
-				$.each(rows, function (j, r) {
-					var blocked = (a.kind === 1 || a.kind === 2) && Number(r.STATUS) < 2;
-					var late = a.dateKey === 'RETURN_DATE' && r.RETURN_DATE && String(r.RETURN_DATE) < now;
-					var href = (blocked || !a.kind) ? '/job.php?id=' + encodeURIComponent(r.NUMBER) : scanUrl(r.NUMBER, a.kind);
-					var row = $('<a>', { 'class': 'kyoto-job' + (blocked ? ' blocked' : ''), href: href }).appendTo(out);
-					row.data('q', [r.NUMBER, r.JOB_NAME, r.COMPANY, r.CLIENT].join(' ').toLowerCase());
-					row.html('<span class="num">' + esc(r.NUMBER) + '</span><span class="name">' + esc(r.JOB_NAME || r.COMPANY || r.CLIENT) + '</span><span class="meta' + (late ? ' late' : '') + '">' +
-						esc(a.dateWord + ' ' + niceDate(r[a.dateKey])) + (late ? ' · LATE' : '') + ' · ' + esc(statusName(r.STATUS)) + (blocked ? ' (book it first)' : '') +
-						(a.filter && r.COMPANY ? ' · ' + esc(r.COMPANY) : '') + '</span>');
-				});
-				if (total > res.data.length) note('Showing the newest ' + res.data.length + ' of ' + total + ' jobs. Use HireHop\'s search below for older ones.').appendTo(out);
+				$.each(rows, function (j, r) { jobRow(out, r, a, now); });
+				if (total > res.data.length) note('Showing the newest ' + res.data.length + ' of ' + total + ' jobs. Use the search box above to find any other job.').appendTo(out);
 				applyFilter();
 				if (filterBox && !isPhone()) filterBox.trigger('focus');
 			}).fail(function () {
@@ -206,6 +218,90 @@
 				button('Try again', out).addClass('small').on('click', function () { showJobs(a, btn); });
 				openSearch();
 			}).always(function () { loading = false; });
+		}
+
+		// Search every job, open or closed. HireHop filters one field per request, so ask for each in turn and merge.
+		function runSearch() {
+			if (loading) return;
+			var q = String(searchBox.val() || '').trim();
+			select(null);
+			if (q.length < 2) { note('Type at least two letters, or a job number.').appendTo(list); return; }
+			var out = $('<div>').appendTo(list).append(note('Searching…'));
+			var found = {}, failed = 0, capped = false, steps = [], i = 0;
+			var a = { kind: 0, dateKey: 'OUT_DATE', dateWord: 'out', filter: true };
+			function add(r) { var k = String(r.NUMBER); if (k && !found[k]) found[k] = r; }
+			if (/^\d{1,9}$/.test(q)) steps.push(function () {
+				return $.ajax({ url: '/php_functions/job_refresh.php', dataType: 'json', timeout: 15000, data: { job: q } }).done(function (j) {
+					if (j && j.error === undefined && j.ID) add({ NUMBER: j.ID, JOB_NAME: j.JOB_NAME, COMPANY: j.COMPANY, CLIENT: j.NAME, STATUS: j.STATUS, OUT_DATE: j.OUT_DATE, RETURN_DATE: j.RETURN_DATE });
+				});   // "no such job" is an ordinary reply here, not a failure
+			});
+			$.each(['JOB_NAME', 'COMPANY', 'CLIENT'], function (n, field) {
+				steps.push(function () {
+					return fetchJobs([], null, { filter: { field: field, value: q } }).done(function (res) {
+						if (badReply(res)) { failed++; return; }
+						if (Number(res.totalRecords) > res.data.length) capped = true;
+						$.each(res.data, function (j, r) { add(r); });
+					}).fail(function () { failed++; });
+				});
+			});
+			function finish() {
+				loading = false;
+				out.empty();
+				var rows = $.map(found, function (r) { return r; }).sort(byDate('OUT_DATE', true)), now = nowStamp();
+				if (!rows.length) note(failed ? 'The search could not be completed. You may need to log in again.' : 'No jobs found for "' + q + '".').appendTo(out);
+				else note(rows.length + (rows.length === 1 ? ' job' : ' jobs') + ' found, newest first. Closed jobs are included.').appendTo(out);
+				$.each(rows, function (j, r) { jobRow(out, r, a, now); });
+				if (capped) note('There are more than 100 matches. Add more letters to narrow it down.').appendTo(out);
+				if (failed && rows.length) note('Part of the search failed, so some jobs may be missing.').appendTo(out);
+				if (failed) button('Try again', out).addClass('small').on('click', runSearch);
+			}
+			function next() {
+				if (i >= steps.length) { finish(); return; }
+				steps[i++]().always(function () { window.setTimeout(next, i < steps.length ? 350 : 0); });   // spaced out to stay inside HireHop's rate limit
+			}
+			loading = true;
+			next();
+		}
+		searchBtn.on('click', runSearch);
+		searchBox.on('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+
+		// Past jobs, most recently returned first. HireHop records no "closed on" date, so the return date is used.
+		var PAST = [{ label: 'Finished', statuses: [7, 11], empty: 'No finished jobs.' }, { label: 'Cancelled / not interested', statuses: [9, 10], empty: 'No cancelled jobs.' }];
+		function showPast(btn, group) {
+			if (loading) return;
+			group = group || PAST[0];
+			select(btn);
+			var pills = $('<div>', { 'class': 'kyoto-ranges' }).appendTo(list);
+			$.each(PAST, function (n, g) {
+				$('<div>', { 'class': 'kyoto-pill' + (g === group ? ' active' : ''), text: g.label, role: 'button' }).appendTo(pills).on('click', function () { showPast(btn, g); });
+			});
+			var out = $('<div>').appendTo(list), page = 0, shown = {}, count = 0;
+			var a = { kind: 0, dateKey: 'RETURN_DATE', dateWord: 'back', filter: true };
+			function more() {
+				if (loading) return;
+				loading = true; page++;
+				out.find('.kyoto-more').remove();
+				var wait = note('Loading jobs…').addClass('kyoto-more').appendTo(out);
+				fetchJobs(group.statuses, null, { sortKey: 'RETURN_DATE', page: page }).done(function (res) {
+					wait.remove();
+					if (badReply(res)) {
+						var why = res && res.error !== undefined ? errorText(res.error) : '';
+						note('Could not load jobs' + (why ? ' (' + why + ')' : '') + '. You may need to log in again.').addClass('kyoto-more').appendTo(out); page--; return;
+					}
+					var now = nowStamp(), total = Number(res.totalRecords) || 0;
+					$.each(res.data.slice().sort(byDate('RETURN_DATE', true)), function (j, r) {
+						if (shown[r.NUMBER]) return;   // pages can overlap
+						shown[r.NUMBER] = true; count++; jobRow(out, r, a, now);
+					});
+					if (!count) { note(group.empty).appendTo(out); return; }
+					if (res.data.length && page * 100 < total) button('Show older jobs (' + count + ' of ' + total + ' shown)', out).addClass('small kyoto-more').on('click', more);
+				}).fail(function () {
+					wait.remove(); page--;
+					note('Could not load jobs. Check the connection and try again.').addClass('kyoto-more').appendTo(out);
+					button('Try again', out).addClass('small kyoto-more').on('click', more);
+				}).always(function () { loading = false; });
+			}
+			more();
 		}
 
 		var lists = [
@@ -230,6 +326,7 @@
 		var outA = { label: 'What is out', statuses: [4, 5, 6], ranged: false, kind: 0, dateKey: 'RETURN_DATE', dateWord: 'back', empty: 'No jobs are marked as out.' };
 		var lateA = $.extend({}, outA, { label: 'Late back', lateOnly: true, empty: 'Nothing is late back.' });
 		(function () { var b = button(findA.label, btns2).addClass('small'); b.on('click', function () { showJobs(findA, b); }); })();
+		(function () { var b = button('Past jobs', btns2).addClass('small'); b.on('click', function () { showPast(b); }); })();
 		button('New quote or job', btns2).addClass('small').on('click', function () {
 			var b = document.getElementById('new_job_btn');
 			if (b) b.click(); else { select(null); note('New job is not available for this login.').appendTo(list); }
