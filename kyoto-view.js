@@ -12,7 +12,7 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.5.1';
+	var VERSION = '0.5.2';
 	var TESTED_API = 1.31;              // HireHop hh_api_version this was built against
 	var KEY = 'kyoto_view_on';
 	var KEY_DAYS = 'kyoto_view_days';
@@ -78,6 +78,7 @@
 		var css = [
 			'#kyoto_view_toggle{position:fixed;left:8px;bottom:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:90;font:12px/1 sans-serif;padding:6px 10px;border-radius:14px;cursor:pointer;opacity:.55;background:#222;color:#fff;border:1px solid #666;user-select:none}',
 			'#kyoto_view_toggle.on{background:#b3123a;border-color:#b3123a;opacity:.8}',
+			'#kyoto_view_toggle.inline{position:static;display:inline-block;margin:0 0 12px 0;opacity:.9}',
 			'@media print{#kyoto_view_toggle,.kyoto-qa,#kyoto_job_bar,#kyoto_flash{display:none !important}}',
 			hide + '{display:none !important}',
 			'.kyoto-qa{margin:0 0 12px 0;padding:10px;border-radius:8px;border:1px solid rgba(128,128,128,.4)}',
@@ -111,6 +112,8 @@
 			'@media (pointer:coarse){.kyoto-pill,.kyoto-btn.small,#kyoto_job_bar .kyoto-btn{min-height:44px;box-sizing:border-box}#kyoto_view_toggle{padding:12px 14px}}',
 			'@media (max-width:800px),(pointer:coarse){',
 			' .kyoto-job .name{flex-basis:60%;white-space:normal}.kyoto-job .meta{flex-basis:100%}',
+			' #kyoto_job_bar{max-width:calc(100vw - 16px);box-sizing:border-box}',   // HireHop's job page is wider than a phone: keep the buttons on the first screen
+			' #kyoto_job_bar .kyoto-btn{flex:1 1 auto}',
 			' body.kyoto-view.kyoto-scan .hh_scanning_app button,body.kyoto-view.kyoto-scan .hh_scanning_app .ui-button{min-height:44px;font-size:16px}',
 			' body.kyoto-view.kyoto-scan .hh_scanning_app input[type=text],body.kyoto-view.kyoto-scan .hh_scanning_app select{min-height:40px;font-size:16px}',
 			' body.kyoto-view.kyoto-scan .hh_scanning_app .pq-grid-cell{font-size:15px;padding-top:8px;padding-bottom:8px}',
@@ -121,8 +124,11 @@
 
 	function addToggle(on) {
 		if (/^\/modules\/scanning(\/|$)/.test(path)) return; // keep the scan box clear; switch from any other page
+		// On a phone a floating switch covers list rows, so it sits in the home page instead (under the Kyoto panel) and nowhere else
+		var home = $();
+		if (isPhone()) { home = $('#kyoto_toggle_slot'); if (!home.length && /^\/home\.php/.test(path)) home = $('<div>', { id: 'kyoto_toggle_slot' }).prependTo($('#search_tab .pane-left').first()); if (!home.length) return; }
 		$('<div>', { id: 'kyoto_view_toggle', 'class': on ? 'on' : '', role: 'button', title: 'Kyoto view ' + VERSION + ' - simplified HireHop for this device only. Click to switch.', text: 'Kyoto view: ' + (on ? 'ON' : 'OFF') })
-			.appendTo(document.body).on('click', function () {
+			.appendTo(home.length ? home : document.body).toggleClass('inline', home.length > 0).on('click', function () {
 				if (!window.confirm('Switch Kyoto view ' + (on ? 'off' : 'on') + ' on this device? The page will reload.')) return;
 				if (!setStore(KEY, on ? '0' : '1')) { window.alert('This browser will not save the setting, so Kyoto view cannot be switched here.'); return; }
 				window.location.reload();
