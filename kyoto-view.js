@@ -459,6 +459,12 @@
 				kitBox.empty().append($('<div>', { 'class': 'kyoto-note', text: 'Could not load the kits' + (why ? ' (' + why + ')' : '') + '. Use Supplying > New > Add listed items.' }));
 			}).always(function () { kitsLoading = false; });
 		}
+		// HireHop's picker search hangs on some symbols (an "&", as in "D&B", never returns), so search on the longest plain run of the name
+		function safeTerm(title) {
+			var best = '';
+			$.each(String(title).split(/[^A-Za-z0-9 .\-]+/), function (i, part) { part = String(part).trim(); if (part.length > best.length) best = part; });
+			return best || String(title);
+		}
 		function pickKit(title) {
 			var manual = 'Open Supplying > New > Add listed items and search for "' + title + '".';
 			var tab = $('li[role="tab"] a[href="#items_tab"]').first();
@@ -476,7 +482,7 @@
 				var box = $('.ui-dialog:visible').has('input.picklist_type').find('input[type="search"]').first();
 				if (box.length) {
 					window.clearInterval(t);
-					box.val(title).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' }));   // runs the picker's own search
+					box.val(safeTerm(title)).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' }));   // runs the picker's own search
 				} else if (tries > 24) { window.clearInterval(t); window.alert(manual); }
 			}, 250);
 		}
