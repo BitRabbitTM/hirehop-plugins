@@ -112,7 +112,7 @@
 			'@media (pointer:coarse){.kyoto-pill,.kyoto-btn.small,#kyoto_job_bar .kyoto-btn{min-height:44px;box-sizing:border-box}#kyoto_view_toggle{padding:12px 14px}}',
 			'@media (max-width:800px),(pointer:coarse){',
 			' .kyoto-job .name{flex-basis:60%;white-space:normal}.kyoto-job .meta{flex-basis:100%}',
-			' #kyoto_job_bar{max-width:calc(100vw - 16px);box-sizing:border-box}',   // HireHop's job page is wider than a phone: keep the buttons on the first screen
+			' #kyoto_job_bar{box-sizing:border-box}',
 			' #kyoto_job_bar .kyoto-btn{flex:1 1 auto}',
 			' body.kyoto-view.kyoto-scan .hh_scanning_app button,body.kyoto-view.kyoto-scan .hh_scanning_app .ui-button{min-height:44px;font-size:16px}',
 			' body.kyoto-view.kyoto-scan .hh_scanning_app input[type=text],body.kyoto-view.kyoto-scan .hh_scanning_app select{min-height:40px;font-size:16px}',
@@ -404,6 +404,8 @@
 		$(document.body).addClass('kyoto-job-page');
 		var anchor = host.closest('table');
 		var bar = $('<div>', { id: 'kyoto_job_bar' }).insertAfter(anchor.length ? anchor : host);
+		// HireHop lays the job page out about 980px wide even on a phone, so the row is held to the real screen width and wraps there
+		if (isPhone()) bar.css('max-width', Math.max(280, Math.min(window.screen.width || 9999, window.innerWidth || 9999) - 24) + 'px');
 		var noteEl = null;
 		function say(text) { if (noteEl) noteEl.remove(); noteEl = $('<div>', { id: 'kyoto_job_note', 'class': 'kyoto-note', text: text }).appendTo(bar); }
 		function status() { return window.job_data && window.job_data.STATUS !== undefined ? Number(window.job_data.STATUS) : null; }
