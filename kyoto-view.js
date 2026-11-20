@@ -12,11 +12,12 @@
 (function () {
 	'use strict';
 
-	var VERSION = '0.4.1';
+	var VERSION = '0.5.0';
 	var TESTED_API = 1.31;              // HireHop hh_api_version this was built against
 	var KEY = 'kyoto_view_on';
 	var KEY_DAYS = 'kyoto_view_days';
 	var KEY_MAINT = 'kyoto_view_maint_tab';
+	var KEY_KITS = 'kyoto_view_kits';
 	if (typeof window.jQuery === 'undefined' || window.kyotoView) return;   // never run twice
 	var $ = window.jQuery, path = window.location.pathname;
 	if (/^\/settings\.php/.test(path) || /^\/login/.test(path)) return;
@@ -102,6 +103,7 @@
 			'#kyoto_job_bar{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 8px 0}',
 			'#kyoto_job_bar .kyoto-btn{padding:10px 16px;font-size:1em}',
 			'#kyoto_job_note{flex-basis:100%}',
+			'#kyoto_kits{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center}#kyoto_kits .kyoto-note{flex-basis:100%}',
 			'#kyoto_flash{position:fixed;left:0;right:0;top:0;z-index:99998;padding:18px 14px;font:700 20px/1.25 sans-serif;color:#fff;text-align:center;display:none;pointer-events:none}',
 			'#kyoto_flash.ok{background:rgba(22,140,60,.95)}#kyoto_flash.bad{background:rgba(190,30,30,.96)}#kyoto_flash.ask{background:rgba(190,120,10,.96)}',
 			'@media (hover:hover){#kyoto_view_toggle:hover{opacity:1}.kyoto-btn:hover{background:#b3123a;color:#fff;border-color:#b3123a}a.kyoto-job:hover{background:rgba(128,128,128,.2)}}',
@@ -409,10 +411,74 @@
 		button('Scan in', bar).on('click', function () { goScan(3); });
 		button('Packing list', bar).on('click', function () { openJobDocument(/^packing list$/i, 'the packing list', 'No "Packing list" document is installed.'); });
 		button('Carnet', bar).on('click', function () { openJobDocument(/carnet/i, 'the carnet', 'No carnet document is installed (Settings > Documents > New > Job carnet).'); });
+		button('Add a kit', bar).on('click', function () { showKits(); });
 		if (typeof window.save_status === 'function') {
 			var book = button('Set to Booked', bar).on('click', function () { window.save_status(2); });   // HireHop asks to confirm
-			var sync = function () { var st = status(); book.toggle(st !== null && st < 2); if (noteEl && st !== null && st >= 2) { noteEl.remove(); noteEl = null; } };
+			// Prepped items go out with the job when it is set to Dispatched (tested 20 Nov 2026); items never prep-scanned are not tracked
+			var disp = button('Set to Dispatched', bar).on('click', function () { window.save_status(5); });   // HireHop asks to confirm
+			var sync = function () {
+				var st = status();
+				book.toggle(st !== null && st < 2); disp.toggle(st === 3);
+				if (noteEl && st !== null && st >= 2) { noteEl.remove(); noteEl = null; }
+			};
 			sync(); window.setInterval(sync, 1500);   // HireHop updates job_data when the status changes
+		}
+
+		// ---- Add a kit. Kyoto's kits are "virtual" stock items (a name that pulls in its contents), not HireHop packages.
+		// The button lists them, then opens HireHop's own "Add listed items" picker already searched for the chosen kit.
+		var kitBox = null, kitsLoading = false;
+		function loadKits() {
+			var d = $.Deferred(), kits = [], page = 1, cached = null;
+			try { cached = JSON.parse(getStore(KEY_KITS) || 'null'); } catch (e) {}
+			if (cached && Array.isArray(cached.kits) && cached.kits.length && new Date().getTime() - Number(cached.t) < 3600000) return d.resolve(cached.kits).promise();
+			(function next() {
+				$.ajax({ url: '/modules/stock/list.php', dataType: 'json', timeout: 20000, data: { pq_datatype: 'JSON', del: 0, rows: 200, USE_CATEGORY_TREE: 1, cats: '[]', show_hidden: 0, inc_virtual: 1, page: page } }).done(function (res) {
+					if (badReply(res)) { d.reject(res && res.error !== undefined ? errorText(res.error) : ''); return; }
+					$.each(res.data, function (i, r) { if (Number(r.VIRTUAL) === 1) kits.push(plain(r.TITLE)); });
+					if (res.data.length === 200 && page < 10) { page++; window.setTimeout(next, 400); return; }
+					kits.sort(function (x, y) { return x.localeCompare(y); });
+					setStore(KEY_KITS, JSON.stringify({ t: new Date().getTime(), kits: kits }));
+					d.resolve(kits);
+				}).fail(function () { d.reject(''); });
+			})();
+			return d.promise();
+		}
+		function showKits() {
+			if (kitBox) { kitBox.remove(); kitBox = null; return; }   // second tap closes it
+			if (kitsLoading) return;
+			kitBox = $('<div>', { id: 'kyoto_kits' }).appendTo(bar).append($('<div>', { 'class': 'kyoto-note', text: 'Loading kits…' }));
+			kitsLoading = true;
+			loadKits().done(function (kits) {
+				if (!kitBox) return;
+				kitBox.empty();
+				if (!kits.length) { $('<div>', { 'class': 'kyoto-note', text: 'No kits are set up in the stock list yet.' }).appendTo(kitBox); return; }
+				$('<div>', { 'class': 'kyoto-note', text: 'Pick a kit. HireHop\'s item picker opens on it: set the quantity, then Save.' }).appendTo(kitBox);
+				$.each(kits, function (i, title) { button(title, kitBox).addClass('small').on('click', function () { pickKit(title); }); });
+			}).fail(function (why) {
+				if (!kitBox) return;
+				kitBox.empty().append($('<div>', { 'class': 'kyoto-note', text: 'Could not load the kits' + (why ? ' (' + why + ')' : '') + '. Use Supplying > New > Add listed items.' }));
+			}).always(function () { kitsLoading = false; });
+		}
+		function pickKit(title) {
+			var manual = 'Open Supplying > New > Add listed items and search for "' + title + '".';
+			var tab = $('li[role="tab"] a[href="#items_tab"]').first();
+			if (!tab.length) { window.alert(manual); return; }
+			tab[0].click();
+			var tries = 0, opened = false, t = window.setInterval(function () {
+				tries++;
+				if (!opened) {
+					var w = null; try { w = $('#items_tab').data('customItems'); } catch (e) {}
+					var item = w && w.imenu_new_listed;
+					if (item && item.length && !item.hasClass('ui-state-disabled')) { opened = true; tries = 0; item.trigger('click'); }   // HireHop's own "Add listed items"
+					else if (tries > 24) { window.clearInterval(t); window.alert(manual); }
+					return;
+				}
+				var box = $('.ui-dialog:visible').has('input.picklist_type').find('input[type="search"]').first();
+				if (box.length) {
+					window.clearInterval(t);
+					box.val(title).trigger($.Event('keyup', { which: 13, keyCode: 13, key: 'Enter' }));   // runs the picker's own search
+				} else if (tries > 24) { window.clearInterval(t); window.alert(manual); }
+			}, 250);
 		}
 		// If the job opened on a tab that is now hidden, go back to the first tab
 		safe('tabs', function () {
